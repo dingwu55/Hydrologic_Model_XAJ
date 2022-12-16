@@ -10,6 +10,9 @@ from typing import Union
 from collections import OrderedDict
 import numpy as np
 from numba import jit
+import warnings
+
+warnings.filterwarnings("ignore")
 
 MIN = 0
 MAX = 1
@@ -20,7 +23,7 @@ class CalibrateXAJ(object):
         self.MIN = 0
         self.MAX = 1
 
-    # @jit
+    @jit
     def calculate_evap(self, lm, c, wu0, wl0, prcp, pet):
         eu = np.where(wu0 + prcp >= pet, pet, wu0 + prcp)
         ed = np.where((wl0 < c * lm) & (wl0 < c * (pet - eu)), c * (pet - eu) - wl0, 0.0)
@@ -28,7 +31,7 @@ class CalibrateXAJ(object):
                                                        np.where(wl0 >= c * (pet - eu), c * (pet - eu), wl0), ), )
         return eu, el, ed
 
-    # @jit
+    @jit
     def calculate_prcp_runoff(self, b, im, wm, w0, pe):
         wmm = wm * (1.0 + b)
         a = wmm * (1.0 - (1.0 - w0 / wm) ** (1.0 / (1.0 + b)))
@@ -266,6 +269,9 @@ class CalibrateXAJ(object):
 
     def xaj(self, p_and_e, xaj_params: Union[np.array, list], return_state=False, kernel_size=15, warmup_length=30,
             source_type="sources", source_book="ShuiWenYuBao", ) -> Union[tuple, np.array]:
+        """
+        模型获取的参数是真实参数，训练结果经过反归一化处理。
+        """
         # params
         # param_ranges = OrderedDict(
         #     # {
@@ -396,7 +402,7 @@ class CalibrateXAJ(object):
     def evaluate(self, individual, rainfall_flood_processes, warmup_length, model):
         # print("Calculate fitness:")
         params = np.array(individual).reshape(1, -1)
-        # 参数与处理？
+        # 参数反归一化
         params = transform_param(params)
         mse = np.array([])
         for rainfall_flood_precess in rainfall_flood_processes:
@@ -435,15 +441,6 @@ class CalibrateXAJ(object):
 
     def calibrate_by_ga(self, rainfall_flood_processes, warmup_length=30, model="xaj", param_num=15, optimal_path=None,
                         **ga_param):
-        """
-        Use GA algorithm to find optimal parameters for hydrologic models
-
-        Returns
-        -------
-        toolbox.population
-            optimal_params
-        """
-
         # 优化目标
         creator.create("FitnessMin", base.Fitness, weights=(-1.0,))
         # 个体生成
@@ -519,8 +516,10 @@ class CalibrateXAJ(object):
         # 保存一个最牛的
         # np.save(optimal_path, pop[minfit_idx, :])
         # transform_param(np.array(pop[minfit_idx]))
-        s = np.array(pop[minfit_idx]).reshape(1, -1)
-        res = param2json(transform_param(s))
+        # 参数反归一化
+        optimal_indi = np.array(pop[minfit_idx]).reshape(1, -1)
+        res = param2json(transform_param(optimal_indi))
+        # 本地化
         serialize_json(res, optimal_path)
         # np.array(individual).reshape(1, -1)
 
@@ -607,13 +606,15 @@ def xaj_load(action_dict):
             params_dict = OrderedDict(
                 json.load(open(os.path.join(action_dict["optimal_path"], "%s.json" % name), 'r'))
             )
-            params = np.array([])
+            params = []
             for key, values in params_dict.items():
-                params = np.append(params, values)
-            paramssssssss = np.load((os.path.join(action_dict["optimal_path"], "%s.npy" % name)))[1, :]
+                # print(values)
+                params.append(np.array([values]))
+            # paramssss = np.load((os.path.join(action_dict["optimal_path"], "%s.npy" % name)))[1, :]
+            cal = CalibrateXAJ()
 
-            params = np.array(params)
-            sim = xaj(x_input, params, warmup_length=action_dict['warmup_length']).squeeze()
+            # params = np.array(params)
+            sim = cal.xaj(x_input, params, warmup_length=action_dict['warmup_length']).squeeze()
             basin_area = action_dict['%s_area' % name]
             lines = [str(round(inform * (basin_area / (3.6 * action_dict['dt'])), 3)) for inform in sim]
             with open(os.path.join(action_dict["pred_res"], "%s.txt" % name), mode="w", encoding="gbk") as f1:
@@ -722,7 +723,7 @@ def serialize_json(my_dict, my_file):
 if __name__ == "__main__":
     print("Fix the bug，please call 17673653855，Mr.Ding")
     action_dict = json.load(open(r'.\param.json', 'r'))
-    action_dict['role'] = 1
+    # action_dict['role'] = 0
     if action_dict['role']:
         train(action_dict)
     else:
